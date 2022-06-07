@@ -1,0 +1,9 @@
+version = 0.1
+[default]
+[default.deploy]
+[default.deploy.parameters]
+stack_name = "wayhome-datamart-app"
+s3_bucket = "aws-sam-cli-managed-default-samclisourcebucket-jos0vdiduypk"
+s3_prefix = "wayhome-datamart-app"
+region = "eu-west-2"
+capabilities = "CAPABILITY_IAM"

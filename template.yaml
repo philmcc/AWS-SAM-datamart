@@ -1,0 +1,153 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  wayhome-datamart
+
+  Sample SAM Template for wayhome-datamart
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 30
+  #Api:
+  #  OpenApiVersion: 3.0.1
+
+Resources:
+  HousePriceS3Bucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: 'wh-house-price-dl-bucket'
+
+  RandDataFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: HousePrice/
+      Handler: get_rand_data.get_rand_registry_data
+      Runtime: python3.8
+      Environment:
+        Variables:
+          #BUCKET_NAME: !Ref  HousePriceDataLakeS3Bucket
+          DATA_TABLE_NAME: !Ref  RandDataTable
+      Policies: ## This is a BAD thing to do as it is far too permissive. Needed to do it like this for quickness and would come back to restrict to necessary perms
+        - AmazonDynamoDBFullAccess
+        - AmazonS3FullAccess
+      Events:
+         HousePriceFetchSchedule:
+          Type: Schedule
+          Properties:
+            Schedule: 'rate(1 minute)'
+            Enabled: true
+
+  RandIndexFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: HousePrice/
+      Handler: get_rand_index.get_rand_price_index
+      Runtime: python3.8
+      Environment:
+        Variables:
+         # BUCKET_NAME: !Ref  HousePriceDataLakeS3Bucket
+          INDEX_TABLE_NAME: !Ref  RandIndexTable
+      Policies: ## This is a BAD thing to do as it is far too permissive. Needed to do it like this for quickness and would come back to restrict to necessary perms
+        - AmazonDynamoDBFullAccess
+        - AmazonS3FullAccess
+      Events:
+         HousePriceFetchSchedule:
+          Type: Schedule
+          Properties:
+            Schedule: 'rate(1 minute)'
+            Enabled: true
+
+
+  RandIndexTable:
+    Type: "AWS::DynamoDB::Table"
+    Properties:
+      TableName: 'rand_index_table'
+      AttributeDefinitions:
+        - AttributeName: "city"
+          AttributeType: "S"
+        - AttributeName: "date"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "city"
+          KeyType: "HASH"
+        - AttributeName: "date"
+          KeyType: "RANGE"
+      ProvisionedThroughput:
+        ReadCapacityUnits: "1"
+        WriteCapacityUnits: "1"
+
+  RandDataTable:
+    Type: "AWS::DynamoDB::Table"
+    Properties:
+      TableName: 'rand_data_table'
+      AttributeDefinitions:
+        - AttributeName: "address"
+          AttributeType: "S"
+        - AttributeName: "date"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "address"
+          KeyType: "HASH"
+        - AttributeName: "date"
+          KeyType: "RANGE"
+      ProvisionedThroughput:
+        ReadCapacityUnits: "1"
+        WriteCapacityUnits: "1"
+
+  ReturnDataFunction:
+        Type: AWS::Serverless::Function
+        Timeout: 30
+        Properties:
+          CodeUri: HousePrice/
+          Handler: returndata.returndata
+          Runtime: python3.8
+          Policies: ## This is a BAD thing to do as it is far too permissive. Needed to do it like this for quickness and would come back to restrict to necessary perms
+            - AmazonAthenaFullAccess
+            - AmazonS3FullAccess
+          Events:
+            wayhomereturndataapi:
+              Type: Api
+              Properties:
+                Path: /wh-price-data
+                Method: GET
+
+
+  housePriceGlueDefaultIamRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - glue.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+
+  housepriceindexGlueDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: "houseindexdata"
+        Description: Glue metadata catalog database price index dataset
+
+  RawpriceindexGlueCrawler:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: 'rawpriceindex'
+      DatabaseName: !Ref housepriceindexGlueDatabase
+      Description: Crawls the Raw house price index Data
+      Role: !GetAtt housePriceGlueDefaultIamRole.Arn
+      Targets:
+        S3Targets:
+          - Path: !Sub "s3://${HousePriceS3Bucket}/rawindexdata"
+      Schedule:
+        ScheduleExpression: cron(0 1 * * ? *) # run every day at 1 am
